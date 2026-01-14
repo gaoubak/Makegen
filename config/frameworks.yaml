@@ -1,0 +1,14 @@
+go:
+  - name: Gin
+    type: web
+    files: [go.sum, go.mod]
+    commands:
+      dev: gin run
+      build: go build
+
+
+javascript:
+  - name: Next.js
+    type: web
+    files: [package.json]
+    patterns: ["next"]
