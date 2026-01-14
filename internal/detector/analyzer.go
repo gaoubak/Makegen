@@ -2,6 +2,7 @@ package detector
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,17 +59,30 @@ func (a *Analyzer) Analyze(projectPath string) (*Result, error) {
 	if err := a.detectLanguage(projectPath, result); err != nil {
 		a.logger.Warn("Language detection error: %v", err)
 	}
+	a.logger.Info("📝 Language detected: %s", result.Language)
 
 	// Detect frameworks
 	a.logger.Debug("Detecting frameworks...")
 	if err := a.detectFrameworks(projectPath, result); err != nil {
 		a.logger.Warn("Framework detection error: %v", err)
 	}
+	if len(result.Frameworks) > 0 {
+		a.logger.Info("🎯 Frameworks detected: %d", len(result.Frameworks))
+		for _, fw := range result.Frameworks {
+			a.logger.Info("   - %s (%s)", fw.Name, fw.Type)
+		}
+	}
 
 	// Detect Docker
 	a.logger.Debug("Detecting Docker...")
 	if err := a.detectDocker(projectPath, result); err != nil {
 		a.logger.Warn("Docker detection error: %v", err)
+	}
+	if result.DockerDetected {
+		a.logger.Info("🐳 Docker detected")
+		if len(result.DockerServices) > 0 {
+			a.logger.Info("   Services: %v", result.DockerServices)
+		}
 	}
 
 	// Analyze project structure
@@ -78,6 +92,81 @@ func (a *Analyzer) Analyze(projectPath string) (*Result, error) {
 	}
 
 	return result, nil
+}
+
+// ============================================================================
+// LANGUAGE DETECTION
+// ============================================================================
+
+// detectLanguage detects the primary programming language
+func (a *Analyzer) detectLanguage(path string, result *Result) error {
+	// Check for Go
+	if fileExists(filepath.Join(path, "go.mod")) {
+		result.Language = "go"
+		result.HasModules = true
+		return nil
+	}
+
+	// Check for Python
+	if fileExists(filepath.Join(path, "requirements.txt")) ||
+		fileExists(filepath.Join(path, "setup.py")) ||
+		fileExists(filepath.Join(path, "pyproject.toml")) {
+		result.Language = "python"
+		return nil
+	}
+
+	// Check for Node.js/JavaScript/TypeScript
+	if fileExists(filepath.Join(path, "package.json")) {
+		// Check if TypeScript
+		if fileExists(filepath.Join(path, "tsconfig.json")) {
+			result.Language = "typescript"
+		} else {
+			result.Language = "javascript"
+		}
+		result.HasModules = true
+		return nil
+	}
+
+	// Check for Rust
+	if fileExists(filepath.Join(path, "Cargo.toml")) {
+		result.Language = "rust"
+		return nil
+	}
+
+	// Check for Java
+	if fileExists(filepath.Join(path, "pom.xml")) {
+		result.Language = "java"
+		return nil
+	}
+
+	if fileExists(filepath.Join(path, "build.gradle")) ||
+		fileExists(filepath.Join(path, "build.gradle.kts")) {
+		result.Language = "java"
+		return nil
+	}
+
+	// Check for Ruby
+	if fileExists(filepath.Join(path, "Gemfile")) {
+		result.Language = "ruby"
+		return nil
+	}
+
+	// Check for PHP
+	if fileExists(filepath.Join(path, "composer.json")) {
+		result.Language = "php"
+		return nil
+	}
+
+	// Check for C/C++
+	if fileExists(filepath.Join(path, "CMakeLists.txt")) ||
+		fileExists(filepath.Join(path, "Makefile")) {
+		result.Language = "cpp"
+		return nil
+	}
+
+	// Default: unknown
+	result.Language = "unknown"
+	return nil
 }
 
 // ============================================================================
@@ -111,8 +200,11 @@ func (a *Analyzer) detectGoFrameworks(path string, result *Result) {
 	goModPath := filepath.Join(path, "go.mod")
 	content, err := readFile(goModPath)
 	if err != nil {
+		a.logger.Debug("Could not read go.mod: %v", err)
 		return
 	}
+
+	found := false
 
 	if hasContent(content, "github.com/gin-gonic/gin") {
 		result.Frameworks = append(result.Frameworks, Framework{
@@ -120,6 +212,8 @@ func (a *Analyzer) detectGoFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Gin")
+		found = true
 	}
 
 	if hasContent(content, "github.com/labstack/echo") {
@@ -128,6 +222,8 @@ func (a *Analyzer) detectGoFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 8080,
 		})
+		a.logger.Debug("✓ Detected: Echo")
+		found = true
 	}
 
 	if hasContent(content, "github.com/gofiber/fiber") {
@@ -136,6 +232,8 @@ func (a *Analyzer) detectGoFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Fiber")
+		found = true
 	}
 
 	if hasContent(content, "gorm.io/gorm") {
@@ -143,6 +241,12 @@ func (a *Analyzer) detectGoFrameworks(path string, result *Result) {
 			Name: "GORM",
 			Type: "orm",
 		})
+		a.logger.Debug("✓ Detected: GORM")
+		found = true
+	}
+
+	if !found {
+		a.logger.Debug("No Go frameworks detected")
 	}
 }
 
@@ -151,11 +255,13 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 	packagePath := filepath.Join(path, "package.json")
 	content, err := readFile(packagePath)
 	if err != nil {
+		a.logger.Debug("Could not read package.json: %v", err)
 		return
 	}
 
 	var pkg map[string]interface{}
 	if err := json.Unmarshal([]byte(content), &pkg); err != nil {
+		a.logger.Debug("Could not parse package.json: %v", err)
 		return
 	}
 
@@ -172,6 +278,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 		}
 	}
 
+	found := false
+
 	// Check for Next.js
 	if _, ok := deps["next"]; ok {
 		result.Frameworks = append(result.Frameworks, Framework{
@@ -179,6 +287,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Next.js")
+		found = true
 	}
 
 	// Check for React
@@ -188,6 +298,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "frontend",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: React")
+		found = true
 	}
 
 	// Check for Vue
@@ -197,6 +309,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "frontend",
 			Port: 5173,
 		})
+		a.logger.Debug("✓ Detected: Vue")
+		found = true
 	}
 
 	// Check for Express
@@ -206,6 +320,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Express")
+		found = true
 	}
 
 	// Check for Fastify
@@ -215,6 +331,8 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Fastify")
+		found = true
 	}
 
 	// Check for NestJS
@@ -224,11 +342,19 @@ func (a *Analyzer) detectJavaScriptFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: NestJS")
+		found = true
+	}
+
+	if !found {
+		a.logger.Debug("No JavaScript frameworks detected")
 	}
 }
 
 // detectPythonFrameworks detects Python frameworks
 func (a *Analyzer) detectPythonFrameworks(path string, result *Result) {
+	found := false
+
 	// Check requirements.txt
 	reqPath := filepath.Join(path, "requirements.txt")
 	if content, err := readFile(reqPath); err == nil {
@@ -238,6 +364,8 @@ func (a *Analyzer) detectPythonFrameworks(path string, result *Result) {
 				Type: "web",
 				Port: 8000,
 			})
+			a.logger.Debug("✓ Detected: Django")
+			found = true
 		}
 		if hasContent(content, "flask") {
 			result.Frameworks = append(result.Frameworks, Framework{
@@ -245,6 +373,8 @@ func (a *Analyzer) detectPythonFrameworks(path string, result *Result) {
 				Type: "web",
 				Port: 5000,
 			})
+			a.logger.Debug("✓ Detected: Flask")
+			found = true
 		}
 		if hasContent(content, "fastapi") {
 			result.Frameworks = append(result.Frameworks, Framework{
@@ -252,39 +382,53 @@ func (a *Analyzer) detectPythonFrameworks(path string, result *Result) {
 				Type: "web",
 				Port: 8000,
 			})
+			a.logger.Debug("✓ Detected: FastAPI")
+			found = true
 		}
 		if hasContent(content, "sqlalchemy") {
 			result.Frameworks = append(result.Frameworks, Framework{
 				Name: "SQLAlchemy",
 				Type: "orm",
 			})
+			a.logger.Debug("✓ Detected: SQLAlchemy")
+			found = true
 		}
 	}
 
 	// Check pyproject.toml
 	pyprojPath := filepath.Join(path, "pyproject.toml")
 	if content, err := readFile(pyprojPath); err == nil {
-		if hasContent(content, "django") {
+		if hasContent(content, "django") && !found {
 			result.Frameworks = append(result.Frameworks, Framework{
 				Name: "Django",
 				Type: "web",
 				Port: 8000,
 			})
+			a.logger.Debug("✓ Detected: Django")
+			found = true
 		}
-		if hasContent(content, "flask") {
+		if hasContent(content, "flask") && !found {
 			result.Frameworks = append(result.Frameworks, Framework{
 				Name: "Flask",
 				Type: "web",
 				Port: 5000,
 			})
+			a.logger.Debug("✓ Detected: Flask")
+			found = true
 		}
-		if hasContent(content, "fastapi") {
+		if hasContent(content, "fastapi") && !found {
 			result.Frameworks = append(result.Frameworks, Framework{
 				Name: "FastAPI",
 				Type: "web",
 				Port: 8000,
 			})
+			a.logger.Debug("✓ Detected: FastAPI")
+			found = true
 		}
+	}
+
+	if !found {
+		a.logger.Debug("No Python frameworks detected")
 	}
 }
 
@@ -293,8 +437,11 @@ func (a *Analyzer) detectRustFrameworks(path string, result *Result) {
 	cargoPath := filepath.Join(path, "Cargo.toml")
 	content, err := readFile(cargoPath)
 	if err != nil {
+		a.logger.Debug("Could not read Cargo.toml: %v", err)
 		return
 	}
+
+	found := false
 
 	if hasContent(content, "actix-web") {
 		result.Frameworks = append(result.Frameworks, Framework{
@@ -302,6 +449,8 @@ func (a *Analyzer) detectRustFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 8000,
 		})
+		a.logger.Debug("✓ Detected: Actix")
+		found = true
 	}
 
 	if hasContent(content, "rocket") {
@@ -310,6 +459,8 @@ func (a *Analyzer) detectRustFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 8000,
 		})
+		a.logger.Debug("✓ Detected: Rocket")
+		found = true
 	}
 
 	if hasContent(content, "axum") {
@@ -318,6 +469,12 @@ func (a *Analyzer) detectRustFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 8000,
 		})
+		a.logger.Debug("✓ Detected: Axum")
+		found = true
+	}
+
+	if !found {
+		a.logger.Debug("No Rust frameworks detected")
 	}
 }
 
@@ -331,6 +488,7 @@ func (a *Analyzer) detectJavaFrameworks(path string, result *Result) {
 				Type: "web",
 				Port: 8080,
 			})
+			a.logger.Debug("✓ Detected: Spring Boot")
 		}
 		return
 	}
@@ -343,6 +501,7 @@ func (a *Analyzer) detectJavaFrameworks(path string, result *Result) {
 				Type: "web",
 				Port: 8080,
 			})
+			a.logger.Debug("✓ Detected: Spring Boot")
 		}
 	}
 }
@@ -352,8 +511,11 @@ func (a *Analyzer) detectRubyFrameworks(path string, result *Result) {
 	gemfilePath := filepath.Join(path, "Gemfile")
 	content, err := readFile(gemfilePath)
 	if err != nil {
+		a.logger.Debug("Could not read Gemfile: %v", err)
 		return
 	}
+
+	found := false
 
 	if hasContent(content, "rails") {
 		result.Frameworks = append(result.Frameworks, Framework{
@@ -361,6 +523,8 @@ func (a *Analyzer) detectRubyFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 3000,
 		})
+		a.logger.Debug("✓ Detected: Rails")
+		found = true
 	}
 
 	if hasContent(content, "sinatra") {
@@ -369,6 +533,12 @@ func (a *Analyzer) detectRubyFrameworks(path string, result *Result) {
 			Type: "web",
 			Port: 4567,
 		})
+		a.logger.Debug("✓ Detected: Sinatra")
+		found = true
+	}
+
+	if !found {
+		a.logger.Debug("No Ruby frameworks detected")
 	}
 }
 
@@ -418,30 +588,37 @@ func (a *Analyzer) parseDockerCompose(path string, result *Result) {
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 
+		// Skip empty lines and comments
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		// Check if we've reached the services section
 		if strings.HasPrefix(trimmed, "services:") {
 			inServices = true
 			continue
 		}
 
 		if inServices {
-			if len(line) > 0 && line[0] != ' ' && line[0] != '\t' {
+			// Check if we've moved to another top-level section (not indented)
+			if len(line) > 0 && line[0] != ' ' && line[0] != '\t' && !strings.HasPrefix(trimmed, "services:") {
 				inServices = false
 				continue
 			}
 
-			if len(line) >= 2 && line[0] == ' ' && line[1] != ' ' {
+			// Service names have exactly 2 spaces indentation (not 4+)
+			if len(line) >= 2 && line[0:1] == " " && line[1:2] != " " && strings.HasSuffix(trimmed, ":") {
 				serviceName := strings.TrimSpace(line)
-				if strings.HasSuffix(serviceName, ":") {
-					serviceName = serviceName[:len(serviceName)-1]
-					if serviceName != "" && !strings.Contains(serviceName, " ") {
-						result.DockerServices = append(result.DockerServices, serviceName)
-						a.logger.Debug("Found Docker service: %s", serviceName)
-					}
+				serviceName = strings.TrimSuffix(serviceName, ":")
+				if serviceName != "" && !strings.Contains(serviceName, " ") {
+					result.DockerServices = append(result.DockerServices, serviceName)
+					a.logger.Debug("Found Docker service: %s", serviceName)
 				}
 			}
 		}
 	}
 
+	// Remove duplicates
 	result.DockerServices = removeDuplicates(result.DockerServices)
 }
 
@@ -671,6 +848,12 @@ func (a *Analyzer) findConfigFiles(path string, result *Result) {
 // UTILITY FUNCTIONS
 // ============================================================================
 
+// fileExists checks if a file exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 // dirExists checks if a directory exists
 func dirExists(path string) bool {
 	info, err := os.Stat(path)
@@ -681,7 +864,7 @@ func dirExists(path string) bool {
 func readFile(path string) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to read file: %w", err)
 	}
 	return string(content), nil
 }

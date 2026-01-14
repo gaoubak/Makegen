@@ -87,7 +87,7 @@ func (b *Builder) writeVariables(w *strings.Builder, cfg *config.MakefileConfig)
 		fmt.Fprintf(w, "GO := go\n")
 		fmt.Fprintf(w, "GOFLAGS := -v\n")
 		fmt.Fprintf(w, "OUT_DIR := bin\n")
-	case "javascript":
+	case "javascript", "typescript":
 		fmt.Fprintf(w, "NPM := npm\n")
 		fmt.Fprintf(w, "NODE := node\n")
 	case "python":
@@ -116,7 +116,7 @@ func (b *Builder) writeHelpTarget(w *strings.Builder) {
 func (b *Builder) writeBuildTargets(w *strings.Builder, cfg *config.MakefileConfig) {
 	fmt.Fprintf(w, "# Build Targets\n")
 
-	// TODO: Language-specific build targets
+	// Language-specific build targets
 	switch cfg.Language {
 	case "go":
 		fmt.Fprintf(w, "build:\n")
@@ -128,7 +128,11 @@ func (b *Builder) writeBuildTargets(w *strings.Builder, cfg *config.MakefileConf
 		fmt.Fprintf(w, "\t$(GO) clean\n")
 		fmt.Fprintf(w, ".PHONY: clean\n\n")
 
-	case "javascript":
+		fmt.Fprintf(w, "run: build\n")
+		fmt.Fprintf(w, "\t./$(OUT_DIR)/$(PROJECT_NAME)\n")
+		fmt.Fprintf(w, ".PHONY: run\n\n")
+
+	case "javascript", "typescript":
 		fmt.Fprintf(w, "install:\n")
 		fmt.Fprintf(w, "\t$(NPM) install\n")
 		fmt.Fprintf(w, ".PHONY: install\n\n")
@@ -137,10 +141,22 @@ func (b *Builder) writeBuildTargets(w *strings.Builder, cfg *config.MakefileConf
 		fmt.Fprintf(w, "\t$(NPM) run build\n")
 		fmt.Fprintf(w, ".PHONY: build\n\n")
 
+		fmt.Fprintf(w, "dev:\n")
+		fmt.Fprintf(w, "\t$(NPM) run dev\n")
+		fmt.Fprintf(w, ".PHONY: dev\n\n")
+
+		fmt.Fprintf(w, "start:\n")
+		fmt.Fprintf(w, "\t$(NPM) start\n")
+		fmt.Fprintf(w, ".PHONY: start\n\n")
+
 	case "python":
 		fmt.Fprintf(w, "install:\n")
 		fmt.Fprintf(w, "\t$(PIP) install -r requirements.txt\n")
 		fmt.Fprintf(w, ".PHONY: install\n\n")
+
+		fmt.Fprintf(w, "run:\n")
+		fmt.Fprintf(w, "\t$(PYTHON) manage.py runserver || $(PYTHON) main.py\n")
+		fmt.Fprintf(w, ".PHONY: run\n\n")
 
 		fmt.Fprintf(w, "clean:\n")
 		fmt.Fprintf(w, "\tfind . -type f -name '*.pyc' -delete\n")
@@ -202,14 +218,19 @@ func (b *Builder) writeFormatTargets(w *strings.Builder, cfg *config.MakefileCon
 
 func (b *Builder) writeDockerTargets(w *strings.Builder, cfg *config.MakefileConfig) {
 	fmt.Fprintf(w, "# Docker Targets\n")
-	fmt.Fprintf(w, "docker-build:\n")
-	fmt.Fprintf(w, "\t$(DOCKER) build -t $(DOCKER_IMAGE):latest .\n")
-	fmt.Fprintf(w, ".PHONY: docker-build\n\n")
 
-	fmt.Fprintf(w, "docker-run: docker-build\n")
-	fmt.Fprintf(w, "\t$(DOCKER) run -it --rm $(DOCKER_IMAGE):latest\n")
-	fmt.Fprintf(w, ".PHONY: docker-run\n\n")
+	// Only add docker-build if we have a Dockerfile
+	if strings.TrimSpace(cfg.DockerImage) != "" {
+		fmt.Fprintf(w, "docker-build:\n")
+		fmt.Fprintf(w, "\t$(DOCKER) build -t $(DOCKER_IMAGE):latest .\n")
+		fmt.Fprintf(w, ".PHONY: docker-build\n\n")
 
+		fmt.Fprintf(w, "docker-run: docker-build\n")
+		fmt.Fprintf(w, "\t$(DOCKER) run -it --rm $(DOCKER_IMAGE):latest\n")
+		fmt.Fprintf(w, ".PHONY: docker-run\n\n")
+	}
+
+	// Docker Compose targets - only if there are services
 	if cfg.DockerCompose && len(cfg.DockerServices) > 0 {
 		fmt.Fprintf(w, "docker-compose-up:\n")
 		fmt.Fprintf(w, "\tdocker-compose up -d\n")
@@ -218,6 +239,14 @@ func (b *Builder) writeDockerTargets(w *strings.Builder, cfg *config.MakefileCon
 		fmt.Fprintf(w, "docker-compose-down:\n")
 		fmt.Fprintf(w, "\tdocker-compose down\n")
 		fmt.Fprintf(w, ".PHONY: docker-compose-down\n\n")
+
+		fmt.Fprintf(w, "docker-compose-logs:\n")
+		fmt.Fprintf(w, "\tdocker-compose logs -f\n")
+		fmt.Fprintf(w, ".PHONY: docker-compose-logs\n\n")
+
+		fmt.Fprintf(w, "docker-compose-build:\n")
+		fmt.Fprintf(w, "\tdocker-compose build\n")
+		fmt.Fprintf(w, ".PHONY: docker-compose-build\n\n")
 	}
 }
 
@@ -230,7 +259,7 @@ func (b *Builder) writeCITargets(w *strings.Builder) {
 
 func (b *Builder) writeDeployTargets(w *strings.Builder) {
 	fmt.Fprintf(w, "# Deploy Targets\n")
-	fmt.Fprintf(w, "deploy: ci docker-build\n")
+	fmt.Fprintf(w, "deploy: ci\n")
 	fmt.Fprintf(w, "\t@echo \"✓ Deploy complete\"\n")
 	fmt.Fprintf(w, ".PHONY: deploy\n\n")
 }
